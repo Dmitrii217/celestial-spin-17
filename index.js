@@ -1,41 +1,36 @@
 import express from 'express'
 import cors from 'cors'
-import path from 'path'
-import { fileURLToPath } from 'url'
-import { Low } from 'lowdb'
-import { JSONFile } from 'lowdb/node'
+import dotenv from 'dotenv'
 
-// Setup __dirname
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+import { getBalanceForUser, getNextSpinTimeForUser, spin } from './services/dataService.js'
 
-// Setup LowDB to read the same db.json as the bot
-const file = path.join(__dirname, '../bot/db.json')
-const adapter = new JSONFile(file)
-const db = new Low(adapter, { users: {} })
+dotenv.config()
 
-// Init Express
 const app = express()
-app.use(cors()) // allow frontend to call API
-const PORT = 3000
+app.use(cors())
+app.use(express.json())
 
-// Read the DB on server start
-await db.read()
-
-// GET /api/balance/:userId — returns balance + nextSpin
-app.get('/api/balance/:userId', async (req, res) => {
-  const userId = req.params.userId
-  const user = db.data.users[userId]
-
-  if (!user) {
-    return res.json({ balance: 0, nextSpinTime: 0 })
-  }
-
-  const { balance, lastSpin } = user
-  const nextSpinTime = lastSpin + 4 * 60 * 60 * 1000 // 4 hours later
-
-  return res.json({ balance, nextSpinTime })
+// API endpoint: get user balance and next spin time
+app.get('/api/balance/:userId', (req, res) => {
+  const { userId } = req.params
+  const balance = getBalanceForUser(userId)
+  const nextSpinTime = getNextSpinTimeForUser(userId)
+  res.json({ balance, nextSpinTime })
 })
+
+// API endpoint: perform a spin for user
+app.post('/api/spin/:userId', async (req, res) => {
+  const { userId } = req.params
+  const reward = await spin(userId)
+  if (reward === false) {
+    // Still in cooldown
+    const nextSpinTime = getNextSpinTimeForUser(userId)
+    return res.status(429).json({ error: 'Cooldown active', nextSpinTime })
+  }
+  res.json({ reward })
+})
+
+const PORT = process.env.PORT || 3000
 
 app.listen(PORT, () => {
   console.log(`🚀 Backend API running at http://localhost:${PORT}`)
